@@ -1,0 +1,176 @@
+import pygame, sys, math
+
+WIDTH, HEIGHT = 1000, 650
+FPS = 60
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Futebol com a Mão - Mobile + PC")
+clock = pygame.time.Clock()
+
+# Cores
+WHITE=(255,255,255); BLACK=(0,0,0); GREEN=(60,200,120); RED=(220,70,70)
+FONT=pygame.font.SysFont("arial",28,bold=True)
+BIG_FONT=pygame.font.SysFont("arial",52,bold=True)
+
+# ========= Funções ==========
+def clamp(v,a,b): return max(a,min(v,b))
+def vec_len(x,y): return math.sqrt(x*x+y*y)
+
+# ========= Classes ==========
+class Player:
+    def __init__(self,x,y,color,controls=None):
+        self.x,self.y=x,y
+        self.r=22; self.color=color; self.speed=5.2
+        self.controls=controls
+        self.dir=[0,0] # para mobile
+
+    def move(self,keys):
+        dx,dy=0,0
+        if self.controls:
+            if keys[self.controls["up"]]: dy-=1
+            if keys[self.controls["down"]]: dy+=1
+            if keys[self.controls["left"]]: dx-=1
+            if keys[self.controls["right"]]: dx+=1
+        dx+=self.dir[0]; dy+=self.dir[1]
+        l=vec_len(dx,dy)
+        if l>0: dx,dy=dx/l,dy/l
+        self.x=clamp(self.x+dx*self.speed,self.r,WIDTH-self.r)
+        self.y=clamp(self.y+dy*self.speed,self.r,HEIGHT-self.r)
+
+    def draw(self,s): pygame.draw.circle(s,self.color,(int(self.x),int(self.y)),self.r)
+
+class Ball:
+    def __init__(self): self.reset()
+    def reset(self):
+        self.x,self.y=WIDTH/2,HEIGHT/2
+        self.r=12; self.vx=0; self.vy=0; self.max_speed=10
+    def update(self):
+        self.x+=self.vx; self.y+=self.vy
+        self.vx*=0.99; self.vy*=0.99
+        if self.y<self.r or self.y>HEIGHT-self.r: self.vy*=-1
+        sp=vec_len(self.vx,self.vy)
+        if sp>self.max_speed: self.vx=self.vx/sp*self.max_speed; self.vy=self.vy/sp*self.max_speed
+    def collide(self,p:Player):
+        dx,dy=self.x-p.x,self.y-p.y
+        d=vec_len(dx,dy)
+        if d<self.r+p.r:
+            if d==0:d=0.1
+            nx,ny=dx/d,dy/d
+            self.x=p.x+nx*(self.r+p.r); self.y=p.y+ny*(self.r+p.r)
+            self.vx+=nx*4; self.vy+=ny*4
+    def draw(self,s):
+        pygame.draw.circle(s,WHITE,(int(self.x),int(self.y)),self.r)
+        pygame.draw.circle(s,BLACK,(int(self.x),int(self.y)),self.r,2)
+
+# ========= Botões Mobile ==========
+class Button:
+    def __init__(self,rect,text):
+        self.rect=pygame.Rect(rect); self.text=text; self.active=False
+    def draw(self,s):
+        col=(100,100,100) if not self.active else (180,180,180)
+        pygame.draw.rect(s,col,self.rect)
+        s.blit(FONT.render(self.text,True,WHITE),(self.rect.x+10,self.rect.y+10))
+    def check(self,pos,down):
+        if self.rect.collidepoint(pos): self.active=down; return True
+        return False
+
+# ========= Jogo ==========
+class SoccerGame:
+    def __init__(self,mode="1x1",mobile=False):
+        self.mode=mode; self.ball=Ball(); self.mobile=mobile
+        self.players_team=[]; self.players_enemy=[]
+        self.score_team=0; self.score_enemy=0; self.max_score=3
+        self.paused=False; self.game_over=False; self.last_goal_timer=0
+        self.setup_players()
+        if self.mobile: self.setup_buttons()
+
+    def setup_players(self):
+        wasd={"up":pygame.K_w,"down":pygame.K_s,"left":pygame.K_a,"right":pygame.K_d}
+        arrows={"up":pygame.K_UP,"down":pygame.K_DOWN,"left":pygame.K_LEFT,"right":pygame.K_RIGHT}
+        if self.mode=="1x1":
+            self.players_team=[Player(200,HEIGHT//2,GREEN,wasd)]
+            self.players_enemy=[Player(WIDTH-200,HEIGHT//2,RED,arrows)]
+        else: # exemplo simplificado
+            self.players_team=[Player(200,HEIGHT//2,GREEN,wasd)]
+            self.players_enemy=[Player(WIDTH-200,HEIGHT//2,RED)]
+
+    def setup_buttons(self):
+        self.buttons={
+            "up":Button((60,HEIGHT-200,60,60),"↑"),
+            "down":Button((60,HEIGHT-80,60,60),"↓"),
+            "left":Button((0,HEIGHT-140,60,60),"←"),
+            "right":Button((120,HEIGHT-140,60,60),"→"),
+            "shoot":Button((WIDTH-160,HEIGHT-140,80,80),"Kick"),
+            "pause":Button((WIDTH-80,20,60,40),"P")
+        }
+
+    def update(self,keys):
+        if self.paused or self.game_over: return
+        for p in self.players_team+self.players_enemy: p.move(keys)
+        for p in self.players_team+self.players_enemy: self.ball.collide(p)
+        self.ball.update()
+        if self.ball.x<self.ball.r:
+            if HEIGHT//2-90<self.ball.y<HEIGHT//2+90: self.score_enemy+=1; self.last_goal_timer=60
+            self.ball.reset()
+        elif self.ball.x>WIDTH-self.ball.r:
+            if HEIGHT//2-90<self.ball.y<HEIGHT//2+90: self.score_team+=1; self.last_goal_timer=60
+            self.ball.reset()
+        if self.score_team>=self.max_score or self.score_enemy>=self.max_score: self.game_over=True
+
+    def draw(self,s):
+        s.fill((7,100,40))
+        pygame.draw.line(s,WHITE,(WIDTH//2,30),(WIDTH//2,HEIGHT-30),2)
+        for p in self.players_team+self.players_enemy: p.draw(s)
+        self.ball.draw(s)
+        s.blit(FONT.render(f"{self.score_team}-{self.score_enemy}",True,WHITE),(WIDTH//2-30,20))
+        if self.last_goal_timer>0:
+            s.blit(BIG_FONT.render("GOOOL!",True,WHITE),(WIDTH//2-120,HEIGHT//2-40))
+            self.last_goal_timer-=1
+        if self.paused: s.blit(FONT.render("PAUSADO",True,WHITE),(WIDTH//2-60,HEIGHT//2))
+        if self.mobile:
+            for b in self.buttons.values(): b.draw(s)
+
+    def handle_touch(self,pos,down):
+        if not self.mobile: return
+        for name,b in self.buttons.items():
+            if b.check(pos,down):
+                if name=="pause" and down: self.paused=not self.paused
+                if name=="up": self.players_team[0].dir[1]=-1 if down else 0
+                if name=="down": self.players_team[0].dir[1]=1 if down else 0
+                if name=="left": self.players_team[0].dir[0]=-1 if down else 0
+                if name=="right": self.players_team[0].dir[0]=1 if down else 0
+                if name=="shoot" and down: self.ball.vx=8; self.ball.vy=0
+
+# ========= Menu ==========
+def show_menu():
+    while True:
+        screen.fill((30,30,30))
+        screen.blit(BIG_FONT.render("Futebol com a Mão",True,WHITE),(WIDTH//2-200,100))
+        txts=["1. 1x1","2. 1xBOT"]
+        for i,t in enumerate(txts): screen.blit(FONT.render(t,True,GREEN),(WIDTH//2-60,250+i*50))
+        screen.blit(FONT.render("M = Mobile",True,WHITE),(WIDTH//2-60,400))
+        pygame.display.flip()
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT: pygame.quit(); sys.exit()
+            if e.type==pygame.KEYDOWN:
+                if e.key==pygame.K_1: return "1x1",False
+                if e.key==pygame.K_2: return "1xBOT",False
+                if e.key==pygame.K_m: return "1x1",True
+
+# ========= Loop Principal ==========
+while True:
+    mode,mobile=show_menu()
+    game=SoccerGame(mode,mobile)
+    running=True
+    while running:
+        clock.tick(FPS)
+        keys=pygame.key.get_pressed()
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT: pygame.quit(); sys.exit()
+            if e.type==pygame.KEYDOWN and e.key==pygame.K_p: game.paused=not game.paused
+            if e.type==pygame.MOUSEBUTTONDOWN: game.handle_touch(e.pos,True)
+            if e.type==pygame.MOUSEBUTTONUP: game.handle_touch(e.pos,False)
+        game.update(keys)
+        game.draw(screen)
+        pygame.display.flip()
