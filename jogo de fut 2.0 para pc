@@ -1,0 +1,196 @@
+import pygame, sys, math
+
+# =============================
+# CONFIGURAÇÕES
+# =============================
+WIDTH, HEIGHT = 1000, 650
+FPS = 60
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Futebol com a Mão - Multiplayer Completo")
+clock = pygame.time.Clock()
+
+# Cores
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GREEN = (60, 200, 120)
+RED = (220, 70, 70)
+
+FONT = pygame.font.SysFont("arial", 28, bold=True)
+BIG_FONT = pygame.font.SysFont("arial", 52, bold=True)
+
+# =============================
+# FUNÇÕES ÚTEIS
+# =============================
+def clamp(value, minv, maxv): return max(minv, min(value, maxv))
+def vec_len(x, y): return math.sqrt(x * x + y * y)
+
+# =============================
+# CLASSES
+# =============================
+class Player:
+    def __init__(self, x, y, color, controls=None, joystick=None):
+        self.x, self.y = x, y
+        self.r = 22
+        self.color = color
+        self.speed = 5.2
+        self.controls = controls
+        self.joystick = joystick
+
+    def move(self, keys):
+        dx, dy = 0, 0
+        if self.controls:
+            if keys[self.controls["up"]]: dy -= 1
+            if keys[self.controls["down"]]: dy += 1
+            if keys[self.controls["left"]]: dx -= 1
+            if keys[self.controls["right"]]: dx += 1
+        if self.joystick:
+            axis_x, axis_y = self.joystick.get_axis(0), self.joystick.get_axis(1)
+            if abs(axis_x) > 0.2: dx += axis_x
+            if abs(axis_y) > 0.2: dy += axis_y
+        l = vec_len(dx, dy)
+        if l > 0: dx, dy = dx / l, dy / l
+        self.x = clamp(self.x + dx * self.speed, self.r, WIDTH - self.r)
+        self.y = clamp(self.y + dy * self.speed, self.r, HEIGHT - self.r)
+
+    def draw(self, surf): pygame.draw.circle(surf, self.color, (int(self.x), int(self.y)), self.r)
+
+class Ball:
+    def __init__(self): self.reset()
+    def reset(self):
+        self.x, self.y = WIDTH / 2, HEIGHT / 2
+        self.r, self.vx, self.vy, self.max_speed = 12, 0, 0, 10
+    def update(self):
+        self.x += self.vx; self.y += self.vy
+        self.vx *= 0.99; self.vy *= 0.99
+        if self.y < self.r or self.y > HEIGHT - self.r: self.vy *= -1
+        sp = vec_len(self.vx, self.vy)
+        if sp > self.max_speed:
+            self.vx = self.vx / sp * self.max_speed
+            self.vy = self.vy / sp * self.max_speed
+    def collide_player(self, p: Player):
+        dx, dy = self.x - p.x, self.y - p.y
+        dist = vec_len(dx, dy)
+        if dist < self.r + p.r:
+            if dist == 0: dist = 0.1
+            nx, ny = dx / dist, dy / dist
+            self.x = p.x + nx * (self.r + p.r)
+            self.y = p.y + ny * (self.r + p.r)
+            self.vx += nx * 4; self.vy += ny * 4
+    def draw(self, surf):
+        pygame.draw.circle(surf, WHITE, (int(self.x), int(self.y)), self.r)
+        pygame.draw.circle(surf, BLACK, (int(self.x), int(self.y)), self.r, 2)
+
+# =============================
+# CLASSE PRINCIPAL
+# =============================
+class SoccerGame:
+    def __init__(self, mode="1x1"):
+        self.mode, self.ball = mode, Ball()
+        self.players_team, self.players_enemy = [], []
+        self.score_team, self.score_enemy, self.max_score = 0, 0, 3
+        self.paused, self.game_over, self.last_goal_timer = False, False, 0
+        self.setup_players()
+
+    def setup_players(self):
+        controls_wasd = {"up":pygame.K_w,"down":pygame.K_s,"left":pygame.K_a,"right":pygame.K_d}
+        controls_arrows = {"up":pygame.K_UP,"down":pygame.K_DOWN,"left":pygame.K_LEFT,"right":pygame.K_RIGHT}
+        joystick = pygame.joystick.Joystick(0) if pygame.joystick.get_count()>0 else None
+        if joystick: joystick.init()
+
+        if self.mode == "1x1":
+            self.players_team = [Player(200, HEIGHT//2, GREEN, controls=controls_wasd)]
+            self.players_enemy = [Player(WIDTH-200, HEIGHT//2, RED, controls=controls_arrows)]
+        elif self.mode == "1xBOT":
+            self.players_team = [Player(200, HEIGHT//2, GREEN, controls=controls_wasd)]
+            self.players_enemy = [Player(WIDTH-200, HEIGHT//2, RED)]
+        elif self.mode == "1x2":
+            self.players_team = [Player(200, HEIGHT//2, GREEN, controls=controls_wasd)]
+            self.players_enemy = [
+                Player(WIDTH-200, HEIGHT//2-60, RED, controls=controls_arrows),
+                Player(WIDTH-200, HEIGHT//2+60, RED, joystick=joystick)
+            ]
+        elif self.mode == "3xBOT":
+            self.players_team = [
+                Player(200, HEIGHT//2-100, GREEN, controls=controls_wasd),
+                Player(200, HEIGHT//2, GREEN, controls=controls_arrows),
+                Player(200, HEIGHT//2+100, GREEN, joystick=joystick)
+            ]
+            self.players_enemy = [Player(WIDTH-200, HEIGHT//2, RED)]
+
+    def update(self, keys):
+        if self.paused or self.game_over: return
+        for p in self.players_team + self.players_enemy: p.move(keys)
+        if "BOT" in self.mode:
+            for e in self.players_enemy:
+                dx, dy = self.ball.x - e.x, self.ball.y - e.y
+                l = vec_len(dx, dy)
+                if l>0: dx, dy = dx/l, dy/l
+                e.x += dx*3; e.y += dy*3
+        for p in self.players_team+self.players_enemy: self.ball.collide_player(p)
+        self.ball.update()
+
+        if self.ball.x < self.ball.r:
+            if HEIGHT//2-90<self.ball.y<HEIGHT//2+90: self.score_enemy+=1; self.last_goal_timer=60
+            self.ball.reset()
+        elif self.ball.x > WIDTH-self.ball.r:
+            if HEIGHT//2-90<self.ball.y<HEIGHT//2+90: self.score_team+=1; self.last_goal_timer=60
+            self.ball.reset()
+        if self.score_team>=self.max_score or self.score_enemy>=self.max_score: self.game_over=True
+
+    def draw(self, surf):
+        surf.fill((7,100,40))
+        pygame.draw.rect(surf,WHITE,(30,30,WIDTH-60,HEIGHT-60),2)
+        pygame.draw.line(surf,WHITE,(WIDTH//2,30),(WIDTH//2,HEIGHT-30),2)
+        pygame.draw.rect(surf,WHITE,(0,HEIGHT//2-90,18,180))
+        pygame.draw.rect(surf,WHITE,(WIDTH-18,HEIGHT//2-90,18,180))
+        for p in self.players_team+self.players_enemy: p.draw(surf)
+        self.ball.draw(surf)
+        score=f"{self.score_team} - {self.score_enemy}"
+        surf.blit(FONT.render(score,True,WHITE),(WIDTH//2-30,20))
+        if self.last_goal_timer>0:
+            surf.blit(BIG_FONT.render("GOOOL!",True,WHITE),(WIDTH//2-120,HEIGHT//2-40))
+            self.last_goal_timer-=1
+        if self.paused: surf.blit(FONT.render("PAUSADO",True,WHITE),(WIDTH//2-60,HEIGHT//2))
+        if self.game_over: surf.blit(FONT.render("FIM DE JOGO! Pressione R para Menu",True,RED),(WIDTH//2-250,HEIGHT//2))
+
+# =============================
+# MENU
+# =============================
+def show_menu():
+    while True:
+        screen.fill((30,30,30))
+        surf = BIG_FONT.render("Futebol com a Mão",True,WHITE)
+        screen.blit(surf,(WIDTH//2-200,100))
+        modes=["1x1","1xBOT","1x2","3xBOT"]
+        for i,m in enumerate(modes):
+            txt = FONT.render(f"{i+1}. {m}",True,GREEN)
+            screen.blit(txt,(WIDTH//2-60,250+i*50))
+        pygame.display.flip()
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT: pygame.quit(); sys.exit()
+            if e.type==pygame.KEYDOWN:
+                if e.key==pygame.K_1: return "1x1"
+                if e.key==pygame.K_2: return "1xBOT"
+                if e.key==pygame.K_3: return "1x2"
+                if e.key==pygame.K_4: return "3xBOT"
+
+# =============================
+# LOOP PRINCIPAL
+# =============================
+while True:
+    mode=show_menu()
+    game=SoccerGame(mode)
+    running=True
+    while running:
+        clock.tick(FPS)
+        keys=pygame.key.get_pressed()
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT: pygame.quit(); sys.exit()
+            if e.type==pygame.KEYDOWN:
+                if e.key==pygame.K_p: game.paused=not game.paused
+                if e.key==pygame.K_r and game.game_over: running=False
+        game.update(keys)
+        game.draw(screen)
+        pygame.display.flip()
